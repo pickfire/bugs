@@ -1,0 +1,15 @@
+[package]
+name = "bugs"
+version = "0.1.0"
+authors = ["Ivan Tham <pickfire@riseup.net>"]
+edition = "2018"
+
+[dependencies]
+ggez = "0.5.0-rc.2"
+log = "0.4"
+fern = { version = "0.5", features = ["colored"] }
+chrono = "0.4"
+rand = "0.6"
+
+[features]
+bot = []
