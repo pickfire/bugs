@@ -1,9 +1,16 @@
-//! https://gamegix.com/simple/game
-//! https://medium.freecodecamp.org/an-introduction-to-reinforcement-learning-4339519de419
+//! Simple dodging game built with ggez. Build with `bot` feature to autoplay.
+//!
+//!     cargo run --features=bot
+//!
+//! ## References
+//!
+//! - <https://gamegix.com/simple/game>
+//! - <https://medium.freecodecamp.org/an-introduction-to-reinforcement-learning-4339519de419>
 use ggez::event::{self, KeyCode};
 use ggez::{self, graphics, input::keyboard, nalgebra, timer, Context, ContextBuilder, GameResult};
 use rand::Rng;
 
+mod learning;
 mod util;
 
 const PLAYER_SIZE: f32 = 20.0;
@@ -76,6 +83,140 @@ impl event::EventHandler for State {
             let player_half = PLAYER_SIZE / 2.0;
 
             if cfg!(feature = "bot") {
+                let player_half = PLAYER_SIZE / 2.0;
+                let score_half = SCORE_SIZE / 2.0;
+
+                let mut move_x = self.score_pos.x - self.player_pos.x;
+                let mut move_y = self.score_pos.y - self.player_pos.y;
+
+                // only need to touch the edge of score
+                move_x -= move_x % (player_half + score_half);
+                move_y -= move_y % (player_half + score_half);
+
+                // relative to player_speed, keep sign
+                move_x /= move_x.abs() * player_speed;
+                move_y /= move_y.abs() * player_speed;
+
+                // calculate player velocity
+                let player_vel = nalgebra::Vector2::new(
+                    if move_x > 0.0 {
+                        player_speed
+                    } else if move_x < 0.0 {
+                        -player_speed
+                    } else {
+                        0.0
+                    },
+                    if move_y > 0.0 {
+                        player_speed
+                    } else if move_y < 0.0 {
+                        -player_speed
+                    } else {
+                        0.0
+                    },
+                );
+
+                // try avoiding collision
+                let mut action_up = true;
+                let mut action_down = true;
+                let mut action_left = true;
+                let mut action_right = true;
+                let mut action_wait = true;
+                for bug in &self.bugs {
+                    let bug_half = BUG_SIZE / 2.0;
+
+                    // check if it hit if wait
+                    let new_player_pos = self.player_pos + player_vel;
+                    let new_bug_pos = bug.pos + bug.vel;
+
+                    if collide(new_player_pos, player_half, new_bug_pos, bug_half) {
+                        log::info!("collide 0 {:?} {:?}", new_player_pos, new_bug_pos);
+                        action_wait = false;
+                    }
+
+                    for n in 1..3 {
+                        let new_player_pos = self.player_pos + player_vel.scale(n as f32);
+                        let new_bug_pos = bug.pos + bug.vel.scale(n as f32);
+
+                        if collide(new_player_pos, player_half, new_bug_pos, bug_half) {
+                            log::info!("collide {} {:?} {:?}", n, new_player_pos, new_bug_pos);
+
+                            let mut hit = false;
+
+                            if new_player_pos.x - player_half <= new_bug_pos.x + bug_half
+                                && new_player_pos.x - player_half >= new_bug_pos.x - bug_half
+                            {
+                                action_left = false;
+                                hit = true;
+                            }
+                            if new_player_pos.x + player_half <= new_bug_pos.x - bug_half
+                                && new_player_pos.x + player_half >= new_bug_pos.x + bug_half
+                            {
+                                action_right = false;
+                                hit = true;
+                            }
+                            if new_player_pos.y - player_half <= new_bug_pos.y + bug_half
+                                && new_player_pos.y - player_half >= new_bug_pos.y - bug_half
+                            {
+                                action_up = false;
+                                hit = true;
+                            }
+                            if new_player_pos.y + player_half <= new_bug_pos.y - bug_half
+                                && new_player_pos.y + player_half >= new_bug_pos.y + bug_half
+                            {
+                                action_down = false;
+                                hit = true;
+                            }
+
+                            if hit {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                log::info!(
+                    "move {} {} {} {} {}",
+                    action_up,
+                    action_down,
+                    action_left,
+                    action_right,
+                    action_wait
+                );
+                let move_y = match (action_up, action_down, action_wait) {
+                    (true, true, true) => move_y,
+                    (true, false, false) => player_speed,
+                    (false, true, false) => -player_speed,
+                    (false, true, true) => player_speed,
+                    (true, false, true) => -player_speed,
+                    (false, false, true) => 0.0,
+                    (_, _, _) => {
+                        log::info!("Good game! Smash potato");
+                        move_y
+                    }
+                };
+                let move_x = match (action_left, action_right, action_wait) {
+                    (true, true, true) => move_x,
+                    (true, false, false) => player_speed,
+                    (false, true, false) => -player_speed,
+                    (false, true, true) => player_speed,
+                    (true, false, true) => -player_speed,
+                    (false, false, true) => 0.0,
+                    (_, _, _) => {
+                        log::info!("Good game! Smash potato");
+                        move_x
+                    }
+                };
+
+                if move_x < 0.0 && self.player_pos.x - player_half > 0.0 {
+                    self.player_pos.x -= player_speed;
+                } else if move_x > 0.0 && self.player_pos.x + player_half < self.screen_size.0 {
+                    self.player_pos.x += player_speed;
+                }
+                if move_y < 0.0 && self.player_pos.y - player_half > 0.0 {
+                    self.player_pos.y -= player_speed;
+                } else if move_y > 0.0 && self.player_pos.y + player_half < self.screen_size.1 {
+                    self.player_pos.y += player_speed;
+                }
             } else {
                 if keyboard::is_key_pressed(ctx, KeyCode::Left)
                     && self.player_pos.x - player_half > 0.0
@@ -170,7 +311,10 @@ impl event::EventHandler for State {
 fn main() {
     util::setup_logger();
 
-    let (mut ctx, mut event_loop) = ContextBuilder::new("bugs", "awesome").build().unwrap();
+    let (mut ctx, mut event_loop) = ContextBuilder::new("bugs", "awesome")
+        .window_mode(ggez::conf::WindowMode::default().dimensions(800.0, 600.0))
+        .build()
+        .unwrap();
 
     let screen_size = (ctx.conf.window_mode.width, ctx.conf.window_mode.height);
     let half = PLAYER_SIZE / 2.0;
